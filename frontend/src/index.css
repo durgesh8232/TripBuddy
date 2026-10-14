@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+html, body, #root {
+  min-height: 100vh;
+}
+
+/* =========================================================
+   1. TripBuddy Mascot Dancing Animations (Loading Overlay)
+   ========================================================= */
+
+@keyframes mascot-dance {
+  0%, 100% {
+    transform: translateY(0) rotate(-6deg) scale(1);
+  }
+  25% {
+    transform: translateY(-16px) rotate(0deg) scale(1.04);
+  }
+  50% {
+    transform: translateY(0) rotate(6deg) scale(1);
+  }
+  75% {
+    transform: translateY(-10px) rotate(0deg) scale(1.02);
+  }
+}
+
+@keyframes arm-left-wave {
+  0%, 100% {
+    transform: rotate(20deg);
+  }
+  50% {
+    transform: rotate(-35deg);
+  }
+}
+
+@keyframes arm-right-wave {
+  0%, 100% {
+    transform: rotate(-25deg);
+  }
+  50% {
+    transform: rotate(30deg);
+  }
+}
+
+@keyframes foot-tap-left {
+  0%, 100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-4px) rotate(-6deg);
+  }
+}
+
+@keyframes foot-tap-right {
+  0%, 100% {
+    transform: translateY(-4px) rotate(6deg);
+  }
+  50% {
+    transform: translateY(0) rotate(0);
+  }
+}
+
+@keyframes shadow-scale {
+  0%, 100% {
+    transform: scaleX(1);
+    opacity: 0.35;
+  }
+  25%, 75% {
+    transform: scaleX(0.7);
+    opacity: 0.15;
+  }
+  50% {
+    transform: scaleX(0.9);
+    opacity: 0.3;
+  }
+}
+
+.animate-mascot-dance {
+  animation: mascot-dance 1.1s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  transform-origin: bottom center;
+}
+
+.animate-arm-left {
+  animation: arm-left-wave 0.55s ease-in-out infinite alternate;
+  transform-origin: 38px 75px;
+}
+
+.animate-arm-right {
+  animation: arm-right-wave 0.55s ease-in-out infinite alternate;
+  transform-origin: 102px 75px;
+}
+
+.animate-foot-left {
+  animation: foot-tap-left 0.55s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+
+.animate-foot-right {
+  animation: foot-tap-right 0.55s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+
+.animate-shadow-scale {
+  animation: shadow-scale 1.1s ease-in-out infinite;
+}
+
+/* =========================================================
+   2. Ambient Walking Buddy Animations (Left-to-Right Walk)
+   ========================================================= */
+
+@keyframes buddy-walk-wobble {
+  0%, 100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(4deg);
+  }
+}
+
+@keyframes buddy-wave-hand {
+  0%, 100% {
+    transform: rotate(15deg);
+  }
+  50% {
+    transform: rotate(-35deg);
+  }
+}
+
+@keyframes bubble-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-buddy-walk {
+  animation: buddy-walk-wobble 0.45s ease-in-out infinite alternate;
+}
+
+.animate-buddy-wave {
+  animation: buddy-wave-hand 0.3s ease-in-out infinite alternate;
+  transform-origin: 102px 75px;
+}
+
+.animate-bubble-pop {
+  animation: bubble-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
