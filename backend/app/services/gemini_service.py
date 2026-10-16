@@ -25,7 +25,7 @@ MODELS = [
 
 
 def enrich_trip_images(plan: TripPlan) -> TripPlan:
-    """Enriches the destination hero, stays, and activities with authentic Unsplash photography."""
+    """Enriches the destination hero, all 3-4 stay options, and activities with authentic photography."""
     # 1. Main Hero Destination Image
     plan.hero_image_url = get_real_image(
         place_name=plan.destination,
@@ -35,13 +35,23 @@ def enrich_trip_images(plan: TripPlan) -> TripPlan:
 
     # 2. Daily Hotel & Activity Spots
     for day in plan.itinerary:
-        if day.stay:
+        # Enrich multiple stay options (3-4 stays) if present
+        if hasattr(day, "recommended_stays") and day.recommended_stays:
+            for hotel in day.recommended_stays:
+                hotel.image_url = get_real_image(
+                    place_name=hotel.name,
+                    destination=plan.destination,
+                    category="stay",
+                )
+        # Fallback support for single stay object
+        elif hasattr(day, "stay") and day.stay:
             day.stay.image_url = get_real_image(
                 place_name=day.stay.name,
                 destination=plan.destination,
                 category="stay",
             )
 
+        # Enrich all activities
         for act in day.activities:
             act.image_url = get_real_image(
                 place_name=act.title,
@@ -62,7 +72,6 @@ def enforce_pacing_bounds(plan: TripPlan, destination: str, pacing: str) -> Trip
             day.activities = day.activities[:5]
 
         # Enforce minimum activity requirements
-        fallback_counter = 1
         time_slots = ["Morning", "Afternoon", "Evening", "Night"]
 
         while len(day.activities) < target_min and len(day.activities) < 5:
@@ -79,7 +88,6 @@ def enforce_pacing_bounds(plan: TripPlan, destination: str, pacing: str) -> Trip
                 image_url=get_real_image(spot_title, destination, category="activity"),
             )
             day.activities.append(fallback_item)
-            fallback_counter += 1
 
         # Global absolute safety floor: minimum 2 places always
         while len(day.activities) < 2:
@@ -119,6 +127,15 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     - If pacing is "Balanced": Each day MUST have 3 or 4 activities.
     - ABSOLUTE BOUNDS: Under NO circumstance should any day have fewer than 2 or more than 5 activities.
 
+    STAYS & FOOD OPTIONS REQUIREMENTS:
+    - Provide exactly 3 to 4 varied "recommended_stays" per day covering different budgets:
+      1. Backpacker / Hostel or Budget lodge
+      2. Mid-range comfortable boutique hotel
+      3. Heritage / Resort / Premium stay
+      Include real locality/area and a concise 'why_pick_here' reason.
+    - Provide exactly 3 to 4 iconic "recommended_food" spots per day:
+      Include popular local restaurants, iconic street breakfast joints, or authentic thali messes with specific 'must_try_dish' items aligned with the dietary preference ({request.dietary_preference}).
+
     Strict JSON Schema required:
     {{
       "destination": "{request.destination}",
@@ -132,8 +149,34 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
         {{
           "day": 1,
           "day_theme": "Theme title",
+          "recommended_stays": [
+            {{
+              "name": "Hotel Option 1",
+              "area": "Locality/Neighborhood",
+              "price_per_night_inr": "₹800 / night",
+              "category": "Backpacker / Budget",
+              "why_pick_here": "Walkable to bus stand, clean dorms and lockers.",
+              "image_url": ""
+            }},
+            {{
+              "name": "Hotel Option 2",
+              "area": "Locality/Neighborhood",
+              "price_per_night_inr": "₹2,500 / night",
+              "category": "Mid-Range Boutique",
+              "why_pick_here": "Comfortable family suites with complimentary breakfast.",
+              "image_url": ""
+            }},
+            {{
+              "name": "Hotel Option 3",
+              "area": "Locality/Neighborhood",
+              "price_per_night_inr": "₹5,500 / night",
+              "category": "Heritage / Luxury Resort",
+              "why_pick_here": "Scenic views, pool, and upscale dining.",
+              "image_url": ""
+            }}
+          ],
           "stay": {{
-            "name": "Hotel Name",
+            "name": "Primary Hotel Pick",
             "area": "Locality",
             "price_per_night_inr": "₹...",
             "best_for": "Reason",
@@ -141,10 +184,25 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
           }},
           "recommended_food": [
             {{
-              "name": "Dine",
-              "cuisine_type": "Type",
-              "must_try_dish": "Dish",
-              "approx_cost_for_two_inr": "₹..."
+              "name": "Restaurant / Food Joint 1",
+              "cuisine_type": "Local Authentic",
+              "must_try_dish": "Signature dish name",
+              "approx_cost_for_two_inr": "₹250",
+              "area": "Locality"
+            }},
+            {{
+              "name": "Restaurant / Food Joint 2",
+              "cuisine_type": "Heritage Eatery",
+              "must_try_dish": "Special snack or thali",
+              "approx_cost_for_two_inr": "₹400",
+              "area": "Locality"
+            }},
+            {{
+              "name": "Restaurant / Food Joint 3",
+              "cuisine_type": "Street Food Hub",
+              "must_try_dish": "Popular local delicacy",
+              "approx_cost_for_two_inr": "₹150",
+              "area": "Locality"
             }}
           ],
           "activities": [
@@ -165,8 +223,9 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     Rules:
     1. All currency strictly in ₹ INR. Never use dollars ($).
     2. Respect travel group ({request.travel_group}) and pacing ({request.pacing}).
-    3. Keep activity descriptions to 1 concise sentence.
-    4. Return ONLY valid raw JSON without conversational filler.
+    3. Ensure exactly 3 to 4 stays and 3 to 4 food options are provided per day.
+    4. Keep activity descriptions to 1 concise sentence.
+    5. Return ONLY valid raw JSON without conversational markdown or filler.
     """
 
     last_error = None
