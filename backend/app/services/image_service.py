@@ -1,6 +1,7 @@
 import os
 import re
 import urllib.parse
+import threading
 import requests
 from dotenv import load_dotenv
 
@@ -8,7 +9,15 @@ load_dotenv()
 
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "").strip()
 
+# Global in-memory cache with lock for concurrent safety
 IMAGE_CACHE: dict[str, str] = {}
+_cache_lock = threading.Lock()
+
+# Reusable HTTP Session with connection pooling
+session = requests.Session()
+adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 # Diverse backup photography if all APIs fail
 FALLBACK_HERO = "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80"
@@ -24,38 +33,29 @@ FALLBACK_ACTIVITIES = [
 
 
 def clean_place_name(text: str) -> str:
-    """
-    Strips noise words like 'Visit the', 'Walk through', 'Enjoy a sunset at', etc.
-    Turns 'Visit the Panchavati Temple' -> 'Panchavati Temple'
-    """
-    # Remove leading common AI activity phrases
+    """Strips conversational noise words to produce search-friendly landmark names."""
     cleaned = re.sub(
         r"^(visit|explore|walk through|head to|discover|experience|enjoy a|enjoy|trip to|tour of|trek to|take a walk at|go to|spend time at)\s+(the\s+)?",
         "",
         text,
         flags=re.IGNORECASE,
     )
-    # Remove unwanted punctuation
     cleaned = re.sub(r"[^\w\s]", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def fetch_from_wikipedia(query: str) -> str | None:
-    """
-    Searches Wikipedia using the OpenSearch/Query API so landmark names
-    like 'Panchavati' or 'Gangapur Dam' find their exact page and authentic photo.
-    """
+    """Searches Wikipedia using the OpenSearch/Query API with a tight 1.2-second timeout."""
     headers = {"User-Agent": "TripBuddy/2.0 (travel-planner-app)"}
     try:
-        # Step 1: Search Wikipedia for the best matching page title
         search_url = (
             f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}"
             f"&format=json&utf8=1&srlimit=1"
         )
-        s_res = requests.get(search_url, headers=headers, timeout=3.0)
+        s_res = session.get(search_url, headers=headers, timeout=1.2)
         if s_res.status_code != 200:
             return None
+
         search_data = s_res.json()
         search_results = search_data.get("query", {}).get("search", [])
         if not search_results:
@@ -63,25 +63,24 @@ def fetch_from_wikipedia(query: str) -> str | None:
 
         best_title = search_results[0]["title"]
 
-        # Step 2: Grab the official thumbnail / original image of that page
         page_url = (
             f"https://en.wikipedia.org/w/api.php?action=query&titles={urllib.parse.quote(best_title)}"
             f"&prop=pageimages&format=json&pithumbsize=800"
         )
-        p_res = requests.get(page_url, headers=headers, timeout=3.0)
+        p_res = session.get(page_url, headers=headers, timeout=1.2)
         if p_res.status_code == 200:
             pages = p_res.json().get("query", {}).get("pages", {})
             for _, val in pages.items():
                 if "thumbnail" in val and "source" in val["thumbnail"]:
                     return val["thumbnail"]["source"]
-    except Exception as e:
-        print(f"[Wikipedia Error] {e}")
+    except Exception:
+        pass
 
     return None
 
 
 def search_unsplash_photo(query: str) -> str | None:
-    """Queries Unsplash Search API with authorization."""
+    """Queries Unsplash Search API with a fast 1.5-second timeout."""
     if not UNSPLASH_ACCESS_KEY:
         return None
 
@@ -92,65 +91,58 @@ def search_unsplash_photo(query: str) -> str | None:
             "Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}",
             "Accept-Version": "v1",
         }
-        res = requests.get(url, headers=headers, timeout=3.5)
+        res = session.get(url, headers=headers, timeout=1.5)
         if res.status_code == 200:
             results = res.json().get("results", [])
             if results:
                 urls = results[0]["urls"]
                 return urls.get("regular") or urls.get("small")
-        elif res.status_code == 403:
-            print("[Unsplash] 403 Forbidden / Rate limit reached. Using Wikipedia fallback.")
-    except Exception as e:
-        print(f"[Unsplash Warning] {e}")
+    except Exception:
+        pass
 
     return None
 
 
 def get_real_image(place_name: str, destination: str = "", category: str = "activity") -> str:
     """
-    Finds real photos by cleaning the spot name and querying:
-    1. Wikipedia (most accurate for monuments, temples, dams, and forts)
-    2. Unsplash API
-    3. Category Fallback
+    Finds real photos concurrently using thread-safe caching:
+    1. Cache hit check
+    2. Wikipedia search (targeted)
+    3. Unsplash search
+    4. Category fallback
     """
     cleaned_name = clean_place_name(place_name)
     cache_key = f"{cleaned_name.lower()}_{destination.lower()}"
 
-    if cache_key in IMAGE_CACHE:
-        return IMAGE_CACHE[cache_key]
+    with _cache_lock:
+        if cache_key in IMAGE_CACHE:
+            return IMAGE_CACHE[cache_key]
 
-    # 1. First Priority: Wikipedia Search (Finds exact Panchavati, Gangapur Dam, Trimbakeshwar, etc.)
-    wiki_queries = [
-        f"{cleaned_name} {destination}".strip(),
-        cleaned_name,
-    ]
-    for q in wiki_queries:
-        wiki_url = fetch_from_wikipedia(q)
-        if wiki_url:
+    target_query = f"{cleaned_name} {destination}".strip() if destination else cleaned_name
+
+    # 1. First Priority: Wikipedia Search
+    wiki_url = fetch_from_wikipedia(target_query)
+    if wiki_url:
+        with _cache_lock:
             IMAGE_CACHE[cache_key] = wiki_url
-            return wiki_url
+        return wiki_url
 
     # 2. Second Priority: Unsplash Search
-    unsplash_queries = [
-        f"{cleaned_name} {destination}".strip(),
-        cleaned_name,
-        f"{destination} {category}".strip(),
-    ]
-    for q in unsplash_queries:
-        photo_url = search_unsplash_photo(q)
-        if photo_url:
+    photo_url = search_unsplash_photo(target_query)
+    if photo_url:
+        with _cache_lock:
             IMAGE_CACHE[cache_key] = photo_url
-            return photo_url
+        return photo_url
 
-    # 3. Third Priority: Context-matched fallback
+    # 3. Third Priority: Fallbacks
     if category == "hero":
         fallback = FALLBACK_HERO
     elif category == "stay":
         fallback = FALLBACK_STAY
     else:
-        # Distribute different fallback images across activities so they never all look identical
         idx = abs(hash(cleaned_name)) % len(FALLBACK_ACTIVITIES)
         fallback = FALLBACK_ACTIVITIES[idx]
 
-    IMAGE_CACHE[cache_key] = fallback
+    with _cache_lock:
+        IMAGE_CACHE[cache_key] = fallback
     return fallback

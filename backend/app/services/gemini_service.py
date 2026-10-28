@@ -1,5 +1,6 @@
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
 from app.schemas.trip_schema import TripPlan, ActivityItem
@@ -15,49 +16,61 @@ client = OpenAI(
     api_key=api_key,
 )
 
-# Verified, active model IDs on OpenRouter
+# High-throughput, low-latency models for rapid JSON output
 MODELS = [
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.0-flash-lite-001",
     "meta-llama/llama-3.1-8b-instruct",
     "mistralai/mistral-small-24b-instruct-2501",
-    "meta-llama/llama-3.3-70b-instruct",
-    "qwen/qwen-2.5-72b-instruct",
 ]
 
 
 def enrich_trip_images(plan: TripPlan) -> TripPlan:
-    """Enriches the destination hero, all 3-4 stay options, and activities with authentic photography."""
-    # 1. Main Hero Destination Image
-    plan.hero_image_url = get_real_image(
-        place_name=plan.destination,
-        destination=plan.destination,
-        category="hero",
-    )
+    """Fetches destination hero, stays, and activities photography concurrently to eliminate latency."""
+    tasks = []
 
-    # 2. Daily Hotel & Activity Spots
+    # 1. Main Hero Destination Image
+    def set_hero():
+        plan.hero_image_url = get_real_image(
+            place_name=plan.destination,
+            destination=plan.destination,
+            category="hero",
+        )
+
+    tasks.append(set_hero)
+
+    # 2. Daily Hotel & Activity Spots (queued in parallel)
     for day in plan.itinerary:
-        # Enrich multiple stay options (3-4 stays) if present
         if hasattr(day, "recommended_stays") and day.recommended_stays:
             for hotel in day.recommended_stays:
-                hotel.image_url = get_real_image(
-                    place_name=hotel.name,
+                def set_hotel(h=hotel):
+                    h.image_url = get_real_image(
+                        place_name=h.name,
+                        destination=plan.destination,
+                        category="stay",
+                    )
+                tasks.append(set_hotel)
+        elif hasattr(day, "stay") and day.stay:
+            def set_single_stay(s=day.stay):
+                s.image_url = get_real_image(
+                    place_name=s.name,
                     destination=plan.destination,
                     category="stay",
                 )
-        # Fallback support for single stay object
-        elif hasattr(day, "stay") and day.stay:
-            day.stay.image_url = get_real_image(
-                place_name=day.stay.name,
-                destination=plan.destination,
-                category="stay",
-            )
+            tasks.append(set_single_stay)
 
-        # Enrich all activities
         for act in day.activities:
-            act.image_url = get_real_image(
-                place_name=act.title,
-                destination=plan.destination,
-                category="activity",
-            )
+            def set_activity(a=act):
+                a.image_url = get_real_image(
+                    place_name=a.title,
+                    destination=plan.destination,
+                    category="activity",
+                )
+            tasks.append(set_activity)
+
+    # Execute all 15-25 image lookups simultaneously
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        list(executor.map(lambda fn: fn(), tasks))
 
     return plan
 
@@ -243,12 +256,13 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,
+                temperature=0.2,
+                max_tokens=3500,
             )
             raw_content = completion.choices[0].message.content
             parsed_plan = TripPlan.model_validate_json(raw_content)
 
-            # Apply pacing bounds and fetch authentic Unsplash photography
+            # Apply pacing bounds and fetch images concurrently
             bounded_plan = enforce_pacing_bounds(parsed_plan, request.destination, request.pacing)
             return enrich_trip_images(bounded_plan)
         except Exception as e:
@@ -296,11 +310,11 @@ def swap_single_activity(req: SwapActivityRequest) -> ActivityItem:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.4,
+                temperature=0.3,
+                max_tokens=400,
             )
             raw = completion.choices[0].message.content
             item = ActivityItem.model_validate_json(raw)
-            # Fetch authentic Unsplash image for the newly swapped spot
             item.image_url = get_real_image(item.title, req.destination, category="activity")
             return item
         except Exception as e:
