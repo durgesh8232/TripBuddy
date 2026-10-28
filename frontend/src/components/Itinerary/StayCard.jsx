@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Bed, ExternalLink, Sparkles, MapPin } from 'lucide-react';
 
+const DEFAULT_HOTEL_IMG = "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80";
+
 export default function StayCard({ stay, stays }) {
-  // Normalize input: accepts either an array 'stays' or a single 'stay' object
-  const stayList = Array.isArray(stays) && stays.length > 0 
-    ? stays 
+  const stayList = Array.isArray(stays) && stays.length > 0
+    ? stays
     : (Array.isArray(stay) ? stay : (stay ? [stay] : []));
 
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -14,11 +15,10 @@ export default function StayCard({ stay, stays }) {
 
   return (
     <div className="bg-[#111927] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-      {/* Top Header & Option Selector Tabs */}
       <div className="p-4 border-b border-slate-800/80 bg-slate-900/40">
         <div className="flex items-center justify-between mb-3">
           <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-teal-400">
-            <Bed className="w-4 h-4" /> Recommended Stay ({stayList.length} Options)
+            <Bed className="w-4 h-4" /> Recommended Stays ({stayList.length} Options)
           </span>
           <a
             href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -32,7 +32,6 @@ export default function StayCard({ stay, stays }) {
           </a>
         </div>
 
-        {/* 3-4 Option Buttons */}
         {stayList.length > 1 && (
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 p-1 bg-slate-950/60 rounded-xl">
             {stayList.map((item, idx) => (
@@ -54,15 +53,15 @@ export default function StayCard({ stay, stays }) {
         )}
       </div>
 
-      {/* Selected Hotel Display */}
       <div className="relative h-44 w-full bg-slate-900 overflow-hidden">
         <img
-          src={
-            activeStay.image_url ||
-            'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80'
-          }
+          src={activeStay.image_url || DEFAULT_HOTEL_IMG}
           alt={activeStay.name}
           className="w-full h-full object-cover transition-transform duration-500 hover:scale-105"
+          onError={(e) => {
+            e.currentTarget.onerror = null;
+            e.currentTarget.src = DEFAULT_HOTEL_IMG;
+          }}
         />
         <div className="absolute top-3 right-3 bg-slate-950/85 backdrop-blur-md border border-teal-500/40 text-teal-300 px-3 py-1 rounded-full text-xs font-bold shadow-lg">
           {activeStay.price_per_night_inr || activeStay.price_per_night || '₹1,200 / night'}
@@ -72,7 +71,6 @@ export default function StayCard({ stay, stays }) {
         </div>
       </div>
 
-      {/* Hotel Details */}
       <div className="p-4 space-y-3">
         <div>
           <h4 className="text-base font-bold text-white tracking-wide">{activeStay.name}</h4>

@@ -11,9 +11,6 @@ import DancingMascotLoader from "./components/DancingMascotLoader";
 import WalkingBuddy from "./components/WalkingBuddy";
 import LocalPhrasesCard from "./components/LocalPhrasesCard";
 import DayTabs from "./components/Itinerary/DayTabs";
-import ActivityTimeline from "./components/Itinerary/ActivityTimeline";
-import StayCard from "./components/Itinerary/StayCard";
-import FoodCard from "./components/Itinerary/FoodCard";
 import MapView from "./components/MapView";
 import PackingChecklist from "./components/PackingChecklist";
 import ChatAssistant from "./components/ChatAssistant";
@@ -133,7 +130,7 @@ export default function App() {
     return <AuthModal onLoginSuccess={(userData) => setUser(userData)} />;
   }
 
-  const currentDayData = tripPlan?.itinerary.find((d) => d.day === activeDay);
+  const currentDayData = tripPlan?.itinerary?.find((d) => d.day === activeDay);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
@@ -259,7 +256,7 @@ export default function App() {
                         <span>{pdfExporting ? "Exporting..." : "Download in PDF"}</span>
                       </button>
 
-                      {/* Total Budget Card with Selected Currency */}
+                      {/* Total Budget Card */}
                       <div className="bg-slate-50 dark:bg-slate-950/80 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-right min-w-[190px]">
                         <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">
                           Total Budget ({selectedCurrency})
@@ -271,7 +268,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Budget Category Chips with Selected Currency */}
+                  {/* Budget Category Chips */}
                   {tripPlan.budget_breakdown_inr && (
                     <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                       {Object.entries(tripPlan.budget_breakdown_inr).map(([category, cost]) => (
@@ -286,25 +283,19 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Day Navigation Tabs */}
-                <DayTabs days={tripPlan.itinerary} activeDay={activeDay} setActiveDay={setActiveDay} />
+                {/* Day Navigation Tabs, Timeline, 3-4 Stays & 3-4 Eateries (Rendered Cleanly in DayTabs) */}
+                <DayTabs
+                  days={tripPlan.itinerary}
+                  activeDay={activeDay}
+                  setActiveDay={setActiveDay}
+                  onSwapActivity={handleSwapActivity}
+                  swappingIndex={swappingIndex}
+                />
 
-                {/* Day Activities, Map, Stay, and Food Section */}
+                {/* Single Route Map View */}
                 {currentDayData && (
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 space-y-6">
-                      <ActivityTimeline
-                        activities={currentDayData.activities}
-                        dayTheme={currentDayData.day_theme}
-                        onSwapActivity={handleSwapActivity}
-                        swappingIndex={swappingIndex}
-                      />
-                      <MapView activities={currentDayData.activities} />
-                    </div>
-                    <div className="space-y-6">
-                      <StayCard stay={currentDayData.stay} />
-                      <FoodCard foods={currentDayData.recommended_food} />
-                    </div>
+                  <div className="mt-6">
+                    <MapView activities={currentDayData.activities} />
                   </div>
                 )}
 

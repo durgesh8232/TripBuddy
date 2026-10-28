@@ -12,12 +12,12 @@ export default function DayTabs({
 }) {
   if (!days || days.length === 0) return null;
 
-  // Locate the currently selected day object
+  // Find the selected day, fallback to first day
   const currentDay = days.find((d) => d.day === activeDay) || days[0];
 
   return (
     <div className="space-y-6">
-      {/* ================= 1. DAY SELECTOR BUTTON TABS ================= */}
+      {/* 1. Day Navigation Buttons */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
         {days.map((d) => (
           <button
@@ -35,10 +35,10 @@ export default function DayTabs({
         ))}
       </div>
 
-      {/* ================= 2. ACTIVE DAY CONTENT (GRID LAYOUT) ================= */}
+      {/* 2. Side-by-Side 2-Column Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Side: Activities Timeline (7-8 Columns) */}
-        <div className="lg:col-span-7 xl:col-span-8">
+        {/* Left Column (7 cols): Activities Timeline */}
+        <div className="lg:col-span-7 xl:col-span-7">
           <ActivityTimeline
             activities={currentDay.activities}
             dayTheme={currentDay.day_theme}
@@ -47,15 +47,12 @@ export default function DayTabs({
           />
         </div>
 
-        {/* Right Side: 3-4 Stays & 3-4 Local Eateries (4-5 Columns) */}
-        <div className="lg:col-span-5 xl:col-span-4 space-y-6">
-          {/* Stays: accepts array of 3-4 options + fallback object */}
+        {/* Right Column (5 cols): 3-4 Recommended Stays & 3-4 Local Eateries */}
+        <div className="lg:col-span-5 xl:col-span-5 space-y-6">
           <StayCard
             stays={currentDay.recommended_stays}
             stay={currentDay.stay}
           />
-
-          {/* Food: accepts array of 3-4 eateries + fallback object */}
           <FoodCard
             foods={currentDay.recommended_food || currentDay.local_eateries}
             food={currentDay.food}
