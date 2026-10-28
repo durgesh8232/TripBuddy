@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -13,20 +14,20 @@ load_dotenv()
 api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
+    base_url="[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)",
     api_key=api_key,
     default_headers={
-        "HTTP-Referer": "https://trip-buddy-peach.vercel.app",
+        "HTTP-Referer": "[https://trip-buddy-peach.vercel.app](https://trip-buddy-peach.vercel.app)",
         "X-Title": "TripBuddy",
     },
 )
 
-# OpenRouter Free Tier endpoints to avoid 429 Insufficient Credits / Quota errors
+# OpenRouter active free routing endpoints (No deprecated slugs)
 MODELS = [
+    "openrouter/auto:free",
     "google/gemini-2.0-flash-exp:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemma-2-9b-it:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
 ]
 
 # Destination baseline coordinates for automatic geographical anchoring
@@ -73,7 +74,7 @@ def sanitize_coordinates(plan: TripPlan, destination: str) -> TripPlan:
                 break
 
     if default_lat is None:
-        default_lat, default_lng = 20.5937, 78.9629  # India center
+        default_lat, default_lng = 20.5937, 78.9629
 
     for day in plan.itinerary:
         for act in day.activities:
@@ -271,20 +272,35 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     for model_name in MODELS:
         try:
             print(f"[TripBuddy] Generating {request.duration_days}-day itinerary via {model_name}...")
-            completion = client.chat.completions.create(
-                model=model_name,
-                response_format={"type": "json_object"},
-                messages=[
+            
+            call_kwargs = {
+                "model": model_name,
+                "messages": [
                     {
                         "role": "system",
                         "content": "You are TripBuddy, an expert Indian travel AI. All pricing must be strictly in Indian Rupees (₹ INR). You output strict valid JSON only.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
-                max_tokens=4500,
-            )
-            raw_content = completion.choices[0].message.content
+                "temperature": 0.2,
+                "max_tokens": 4500,
+            }
+
+            try:
+                completion = client.chat.completions.create(
+                    **call_kwargs,
+                    response_format={"type": "json_object"}
+                )
+            except Exception:
+                completion = client.chat.completions.create(**call_kwargs)
+
+            raw_content = completion.choices[0].message.content.strip()
+
+            # Strip markdown fences if the model wraps output with ```json
+            if raw_content.startswith("```"):
+                raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+                raw_content = re.sub(r"\s*```$", "", raw_content)
+
             parsed_plan = TripPlan.model_validate_json(raw_content)
 
             # 1. Enforce activity bounds
@@ -328,20 +344,31 @@ def swap_single_activity(req: SwapActivityRequest) -> ActivityItem:
 
     for model_name in MODELS:
         try:
-            completion = client.chat.completions.create(
-                model=model_name,
-                response_format={"type": "json_object"},
-                messages=[
+            call_kwargs = {
+                "model": model_name,
+                "messages": [
                     {
                         "role": "system",
                         "content": "You are TripBuddy. Output strict JSON only for a single travel activity in ₹ INR.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,
-                max_tokens=400,
-            )
-            raw = completion.choices[0].message.content
+                "temperature": 0.3,
+                "max_tokens": 400,
+            }
+            try:
+                completion = client.chat.completions.create(
+                    **call_kwargs,
+                    response_format={"type": "json_object"}
+                )
+            except Exception:
+                completion = client.chat.completions.create(**call_kwargs)
+
+            raw = completion.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = re.sub(r"\s*```$", "", raw)
+
             item = ActivityItem.model_validate_json(raw)
 
             if item.latitude == 0.0 or item.longitude == 0.0:
