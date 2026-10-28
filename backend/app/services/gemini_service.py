@@ -15,14 +15,18 @@ api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=api_key,
+    default_headers={
+        "HTTP-Referer": "https://trip-buddy-peach.vercel.app",
+        "X-Title": "TripBuddy",
+    },
 )
 
-# High-throughput, low-latency models for rapid JSON output
+# OpenRouter Free Tier endpoints to avoid 429 Insufficient Credits / Quota errors
 MODELS = [
-    "google/gemini-2.0-flash-001",
-    "google/gemini-2.0-flash-lite-001",
-    "meta-llama/llama-3.1-8b-instruct",
-    "mistralai/mistral-small-24b-instruct-2501",
+    "google/gemini-2.0-flash-exp:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
 ]
 
 # Destination baseline coordinates for automatic geographical anchoring
@@ -59,7 +63,6 @@ def sanitize_coordinates(plan: TripPlan, destination: str) -> TripPlan:
             default_lat, default_lng = coords
             break
 
-    # If destination isn't in common dictionary, infer from first realistic coordinate found
     if default_lat is None:
         for day in plan.itinerary:
             for act in day.activities:
@@ -69,13 +72,11 @@ def sanitize_coordinates(plan: TripPlan, destination: str) -> TripPlan:
             if default_lat is not None:
                 break
 
-    # Default fallback to 0.0 only if completely indeterminable
     if default_lat is None:
-        default_lat, default_lng = 20.5937, 78.9629  # India geographic center
+        default_lat, default_lng = 20.5937, 78.9629  # India center
 
     for day in plan.itinerary:
         for act in day.activities:
-            # Check for dummy/hallucinated Maharashtra coordinates or empty values
             is_dummy = (
                 act.latitude is None
                 or act.longitude is None
@@ -84,7 +85,6 @@ def sanitize_coordinates(plan: TripPlan, destination: str) -> TripPlan:
                 or (round(act.latitude, 1) == 20.0 and round(act.longitude, 1) == 73.8 and "nashik" not in dest_clean)
             )
             if is_dummy:
-                # Disperse coordinates within a 3-5 km realistic radius of destination center
                 act.latitude = round(default_lat + random.uniform(-0.03, 0.03), 4)
                 act.longitude = round(default_lng + random.uniform(-0.03, 0.03), 4)
 
@@ -203,8 +203,8 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     - Do NOT provide dummy values or placeholder coordinates.
 
     STAYS & FOOD REQUIREMENTS:
-    - For each day, provide 2 to 3 "recommended_stays" matching different budgets (Budget, Mid-range, Luxury).
-    - For each day, provide 2 to 3 "recommended_food" spots with signature dishes aligned to {request.dietary_preference}.
+    - For each day, provide 2 "recommended_stays" matching different budgets (Budget, Luxury).
+    - For each day, provide 2 "recommended_food" spots with signature dishes aligned to {request.dietary_preference}.
     - Keep all activity descriptions to 1 concise sentence.
 
     Strict JSON Schema required:
@@ -282,7 +282,7 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=6500,  # Accommodates full 4 to 7-day payloads without cutoff
+                max_tokens=4500,
             )
             raw_content = completion.choices[0].message.content
             parsed_plan = TripPlan.model_validate_json(raw_content)
@@ -344,7 +344,6 @@ def swap_single_activity(req: SwapActivityRequest) -> ActivityItem:
             raw = completion.choices[0].message.content
             item = ActivityItem.model_validate_json(raw)
 
-            # Anchor swapped activity coordinates if dummy
             if item.latitude == 0.0 or item.longitude == 0.0:
                 for city_key, coords in CITY_COORDINATES.items():
                     if city_key in req.destination.strip().lower():
