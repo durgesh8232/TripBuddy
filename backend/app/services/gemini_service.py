@@ -1,5 +1,6 @@
 import os
 import json
+import random
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -24,12 +25,76 @@ MODELS = [
     "mistralai/mistral-small-24b-instruct-2501",
 ]
 
+# Destination baseline coordinates for automatic geographical anchoring
+CITY_COORDINATES = {
+    "varanasi": (25.3176, 82.9739),
+    "goa": (15.2993, 74.1240),
+    "mumbai": (19.0760, 72.8777),
+    "delhi": (28.6139, 77.2090),
+    "new delhi": (28.6139, 77.2090),
+    "jaipur": (26.9124, 75.7873),
+    "manali": (32.2432, 77.1892),
+    "kerala": (9.9312, 76.2673),
+    "udaipur": (24.5854, 73.7125),
+    "bengaluru": (12.9716, 77.5946),
+    "bangalore": (12.9716, 77.5946),
+    "hyderabad": (17.3850, 78.4867),
+    "chennai": (13.0827, 80.2707),
+    "kolkata": (22.5726, 88.3639),
+    "agra": (27.1767, 78.0081),
+    "amritsar": (31.6340, 74.8723),
+    "rishikesh": (30.0869, 78.2676),
+    "pune": (18.5204, 73.8567),
+    "nashik": (19.9975, 73.7898),
+}
+
+
+def sanitize_coordinates(plan: TripPlan, destination: str) -> TripPlan:
+    """Ensures all itinerary activity coordinates fall strictly within the destination region."""
+    dest_clean = destination.strip().lower()
+    default_lat, default_lng = None, None
+
+    for city_key, coords in CITY_COORDINATES.items():
+        if city_key in dest_clean:
+            default_lat, default_lng = coords
+            break
+
+    # If destination isn't in common dictionary, infer from first realistic coordinate found
+    if default_lat is None:
+        for day in plan.itinerary:
+            for act in day.activities:
+                if act.latitude and act.longitude and not (round(act.latitude, 1) == 20.0 and round(act.longitude, 1) == 73.8):
+                    default_lat, default_lng = act.latitude, act.longitude
+                    break
+            if default_lat is not None:
+                break
+
+    # Default fallback to 0.0 only if completely indeterminable
+    if default_lat is None:
+        default_lat, default_lng = 20.5937, 78.9629  # India geographic center
+
+    for day in plan.itinerary:
+        for act in day.activities:
+            # Check for dummy/hallucinated Maharashtra coordinates or empty values
+            is_dummy = (
+                act.latitude is None
+                or act.longitude is None
+                or act.latitude == 0.0
+                or act.longitude == 0.0
+                or (round(act.latitude, 1) == 20.0 and round(act.longitude, 1) == 73.8 and "nashik" not in dest_clean)
+            )
+            if is_dummy:
+                # Disperse coordinates within a 3-5 km realistic radius of destination center
+                act.latitude = round(default_lat + random.uniform(-0.03, 0.03), 4)
+                act.longitude = round(default_lng + random.uniform(-0.03, 0.03), 4)
+
+    return plan
+
 
 def enrich_trip_images(plan: TripPlan) -> TripPlan:
     """Fetches destination hero, stays, and activities photography concurrently to eliminate latency."""
     tasks = []
 
-    # 1. Main Hero Destination Image
     def set_hero():
         plan.hero_image_url = get_real_image(
             place_name=plan.destination,
@@ -39,7 +104,6 @@ def enrich_trip_images(plan: TripPlan) -> TripPlan:
 
     tasks.append(set_hero)
 
-    # 2. Daily Hotel & Activity Spots (queued in parallel)
     for day in plan.itinerary:
         if hasattr(day, "recommended_stays") and day.recommended_stays:
             for hotel in day.recommended_stays:
@@ -68,7 +132,6 @@ def enrich_trip_images(plan: TripPlan) -> TripPlan:
                 )
             tasks.append(set_activity)
 
-    # Execute all 15-25 image lookups simultaneously
     with ThreadPoolExecutor(max_workers=10) as executor:
         list(executor.map(lambda fn: fn(), tasks))
 
@@ -80,40 +143,37 @@ def enforce_pacing_bounds(plan: TripPlan, destination: str, pacing: str) -> Trip
     target_min = 4 if pacing == "Fast-Paced" else (3 if pacing == "Balanced" else 2)
 
     for day in plan.itinerary:
-        # Enforce maximum 5 places across all pacing modes
         if len(day.activities) > 5:
             day.activities = day.activities[:5]
 
-        # Enforce minimum activity requirements
         time_slots = ["Morning", "Afternoon", "Evening", "Night"]
 
         while len(day.activities) < target_min and len(day.activities) < 5:
             slot = time_slots[len(day.activities) % len(time_slots)]
-            spot_title = f"Local Heritage Walk & Markets in {destination}"
+            spot_title = f"Local Heritage & Cultural Exploration in {destination}"
             fallback_item = ActivityItem(
                 time_of_day=slot,
                 title=spot_title,
-                description=f"Explore vibrant local bazaars and architectural sights in {destination}.",
-                estimated_cost_inr="₹150",
+                description=f"Explore prominent cultural landmarks, street bazaars, and heritage in {destination}.",
+                estimated_cost_inr="₹200",
                 transit_tip="Walking / Quick Auto",
-                latitude=20.0,
-                longitude=73.78,
+                latitude=0.0,
+                longitude=0.0,
                 image_url=get_real_image(spot_title, destination, category="activity"),
             )
             day.activities.append(fallback_item)
 
-        # Global absolute safety floor: minimum 2 places always
         while len(day.activities) < 2:
-            spot_title = f"Sunset Viewpoint in {destination}"
+            spot_title = f"Scenic Viewpoint & Sunset in {destination}"
             day.activities.append(
                 ActivityItem(
                     time_of_day="Evening",
                     title=spot_title,
-                    description="Relax at a popular scenic viewpoint during golden hour.",
+                    description=f"Relax at a well-known local scenic viewpoint during golden hour in {destination}.",
                     estimated_cost_inr="₹100",
                     transit_tip="Auto / Taxi",
-                    latitude=20.0,
-                    longitude=73.78,
+                    latitude=0.0,
+                    longitude=0.0,
                     image_url=get_real_image(spot_title, destination, category="activity"),
                 )
             )
@@ -134,20 +194,18 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     - Group Type: {request.travel_group}
     - Transport Preference: {request.transport_pref}
 
-    STRICT PACING AND ACTIVITY COUNT PER DAY:
-    - If pacing is "Fast-Paced": Each day MUST have exactly 4 or 5 activities (minimum 4, maximum 5).
-    - If pacing is "Relaxed": Each day MUST have 2 or 3 activities (minimum 2, maximum 3).
-    - If pacing is "Balanced": Each day MUST have 3 or 4 activities.
-    - ABSOLUTE BOUNDS: Under NO circumstance should any day have fewer than 2 or more than 5 activities.
+    CRITICAL DURATION MANDATE:
+    - The "itinerary" array MUST contain EXACTLY {request.duration_days} separate day objects (Day 1 through Day {request.duration_days}).
+    - You must NOT generate fewer days than requested.
 
-    STAYS & FOOD OPTIONS REQUIREMENTS:
-    - Provide exactly 3 to 4 varied "recommended_stays" per day covering different budgets:
-      1. Backpacker / Hostel or Budget lodge
-      2. Mid-range comfortable boutique hotel
-      3. Heritage / Resort / Premium stay
-      Include real locality/area and a concise 'why_pick_here' reason.
-    - Provide exactly 3 to 4 iconic "recommended_food" spots per day:
-      Include popular local restaurants, iconic street breakfast joints, or authentic thali messes with specific 'must_try_dish' items aligned with the dietary preference ({request.dietary_preference}).
+    COORDINATE & MAP ACCURACY:
+    - Provide realistic, accurate latitude and longitude floating-point values strictly within or immediate to {request.destination}.
+    - Do NOT provide dummy values or placeholder coordinates.
+
+    STAYS & FOOD REQUIREMENTS:
+    - For each day, provide 2 to 3 "recommended_stays" matching different budgets (Budget, Mid-range, Luxury).
+    - For each day, provide 2 to 3 "recommended_food" spots with signature dishes aligned to {request.dietary_preference}.
+    - Keep all activity descriptions to 1 concise sentence.
 
     Strict JSON Schema required:
     {{
@@ -164,27 +222,11 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
           "day_theme": "Theme title",
           "recommended_stays": [
             {{
-              "name": "Hotel Option 1",
-              "area": "Locality/Neighborhood",
+              "name": "Hotel Option",
+              "area": "Locality",
               "price_per_night_inr": "₹800 / night",
               "category": "Backpacker / Budget",
-              "why_pick_here": "Walkable to bus stand, clean dorms and lockers.",
-              "image_url": ""
-            }},
-            {{
-              "name": "Hotel Option 2",
-              "area": "Locality/Neighborhood",
-              "price_per_night_inr": "₹2,500 / night",
-              "category": "Mid-Range Boutique",
-              "why_pick_here": "Comfortable family suites with complimentary breakfast.",
-              "image_url": ""
-            }},
-            {{
-              "name": "Hotel Option 3",
-              "area": "Locality/Neighborhood",
-              "price_per_night_inr": "₹5,500 / night",
-              "category": "Heritage / Luxury Resort",
-              "why_pick_here": "Scenic views, pool, and upscale dining.",
+              "why_pick_here": "Clean amenities near transport links.",
               "image_url": ""
             }}
           ],
@@ -197,24 +239,10 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
           }},
           "recommended_food": [
             {{
-              "name": "Restaurant / Food Joint 1",
+              "name": "Restaurant Name",
               "cuisine_type": "Local Authentic",
-              "must_try_dish": "Signature dish name",
-              "approx_cost_for_two_inr": "₹250",
-              "area": "Locality"
-            }},
-            {{
-              "name": "Restaurant / Food Joint 2",
-              "cuisine_type": "Heritage Eatery",
-              "must_try_dish": "Special snack or thali",
-              "approx_cost_for_two_inr": "₹400",
-              "area": "Locality"
-            }},
-            {{
-              "name": "Restaurant / Food Joint 3",
-              "cuisine_type": "Street Food Hub",
-              "must_try_dish": "Popular local delicacy",
-              "approx_cost_for_two_inr": "₹150",
+              "must_try_dish": "Signature dish",
+              "approx_cost_for_two_inr": "₹300",
               "area": "Locality"
             }}
           ],
@@ -222,11 +250,11 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
             {{
               "time_of_day": "Morning",
               "title": "Spot Name",
-              "description": "Short 1-line description tailored to {request.pacing} pacing.",
+              "description": "Short 1-line description.",
               "estimated_cost_inr": "₹...",
               "transit_tip": "Transit via {request.transport_pref}",
-              "latitude": 20.0,
-              "longitude": 73.78,
+              "latitude": 25.3176,
+              "longitude": 82.9739,
               "image_url": ""
             }}
           ]
@@ -235,17 +263,14 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
     }}
     Rules:
     1. All currency strictly in ₹ INR. Never use dollars ($).
-    2. Respect travel group ({request.travel_group}) and pacing ({request.pacing}).
-    3. Ensure exactly 3 to 4 stays and 3 to 4 food options are provided per day.
-    4. Keep activity descriptions to 1 concise sentence.
-    5. Return ONLY valid raw JSON without conversational markdown or filler.
+    2. Output strictly valid JSON only. Do not add markdown fences or conversational preambles.
     """
 
     last_error = None
 
     for model_name in MODELS:
         try:
-            print(f"[TripBuddy] Generating itinerary via OpenRouter ({model_name})...")
+            print(f"[TripBuddy] Generating {request.duration_days}-day itinerary via {model_name}...")
             completion = client.chat.completions.create(
                 model=model_name,
                 response_format={"type": "json_object"},
@@ -257,14 +282,17 @@ def generate_trip_itinerary(request: TripRequest) -> TripPlan:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=3500,
+                max_tokens=6500,  # Accommodates full 4 to 7-day payloads without cutoff
             )
             raw_content = completion.choices[0].message.content
             parsed_plan = TripPlan.model_validate_json(raw_content)
 
-            # Apply pacing bounds and fetch images concurrently
+            # 1. Enforce activity bounds
             bounded_plan = enforce_pacing_bounds(parsed_plan, request.destination, request.pacing)
-            return enrich_trip_images(bounded_plan)
+            # 2. Sanitize and cluster map coordinates inside the destination
+            sanitized_plan = sanitize_coordinates(bounded_plan, request.destination)
+            # 3. Enrich imagery in parallel
+            return enrich_trip_images(sanitized_plan)
         except Exception as e:
             last_error = e
             print(f"[Warning] Model {model_name} failed: {e}")
@@ -291,11 +319,11 @@ def swap_single_activity(req: SwapActivityRequest) -> ActivityItem:
       "description": "Short 1-line description of what to do here.",
       "estimated_cost_inr": "₹200",
       "transit_tip": "Quick auto / cab route tip",
-      "latitude": 20.0,
-      "longitude": 73.78,
+      "latitude": 0.0,
+      "longitude": 0.0,
       "image_url": ""
     }}
-    Rules: Currency strictly in ₹ INR. Return valid raw JSON only.
+    Rules: Currency strictly in ₹ INR. Return valid raw JSON only. Provide accurate coordinates for {req.destination}.
     """
 
     for model_name in MODELS:
@@ -315,6 +343,15 @@ def swap_single_activity(req: SwapActivityRequest) -> ActivityItem:
             )
             raw = completion.choices[0].message.content
             item = ActivityItem.model_validate_json(raw)
+
+            # Anchor swapped activity coordinates if dummy
+            if item.latitude == 0.0 or item.longitude == 0.0:
+                for city_key, coords in CITY_COORDINATES.items():
+                    if city_key in req.destination.strip().lower():
+                        item.latitude = round(coords[0] + random.uniform(-0.02, 0.02), 4)
+                        item.longitude = round(coords[1] + random.uniform(-0.02, 0.02), 4)
+                        break
+
             item.image_url = get_real_image(item.title, req.destination, category="activity")
             return item
         except Exception as e:
